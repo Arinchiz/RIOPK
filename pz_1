@@ -1,0 +1,162 @@
+1 Плохие имена функций и переменных
+Пример:
+
+public void doIt(String s, int n) {
+ System.out.println("Data: " + s + " num: " + n);
+}
+
+	Исправленный вариант:
+
+public void printUserInfo(String userName, int userAge) {
+    System.out.println("User: " + userName + ", Age: " + userAge);
+}
+
+2 Избыточные временные переменные
+Пример:
+
+public double calculate(double a, double b) {
+    double result = a + b;
+    return result;
+}
+
+	Исправленный вариант:
+
+public double calculate(double a, double b) {
+    return a + b;
+}
+
+	3 Дублирование кода
+Пример:
+
+public double getDiscountedPrice(double price) {
+    return price - (price * 0.2);
+}
+
+public double getDiscountedServicePrice(double price) {
+    return price - (price * 0.2);
+}
+
+Исправленный вариант:
+
+public double applyDiscount(double price, double discountRate) {
+    return price - (price * discountRate);
+}
+
+
+
+
+4 Использование устаревших коллекций
+Пример:
+
+Vector<String> list = new Vector<>();
+list.add("Apple");
+list.add("Banana");
+
+Исправленный вариант:
+
+List<String> list = new ArrayList<>();
+list.add("Apple");
+list.add("Banana");
+
+5 Отсутствие обработки ошибок
+Пример:
+
+public void divide(int a, int b) {
+    int result = a / b;
+    System.out.println("Result: " + result);
+}
+
+Исправленный вариант:
+
+public void divide(int a, int b) {
+    try {
+        int result = a / b;
+        System.out.println("Result: " + result);
+    } catch (ArithmeticException e) {
+        System.out.println("Ошибка: деление на ноль!");
+    }
+}
+
+6 Магические числа
+Пример:
+
+public double calculateSalary(double base) {
+    return base + (base * 0.15); // что за 0.15?
+}
+
+Исправленный вариант:
+
+public static final double BONUS_RATE = 0.15;
+
+public double calculateSalary(double base) {
+    return base + (base * BONUS_RATE);
+}
+
+7 Громоздкие if-else вместо switch или коллекций
+Пример:
+
+public String getDayName(int day) {
+    if (day == 1) return "Monday";
+    else if (day == 2) return "Tuesday";
+    else if (day == 3) return "Wednesday";
+    else if (day == 4) return "Thursday";
+    else if (day == 5) return "Friday";
+    else if (day == 6) return "Saturday";
+    else if (day == 7) return "Sunday";
+    else return "Invalid";
+}
+
+Исправленный вариант:
+
+public String getDayName(int day) {
+    return switch (day) {
+        case 1 -> "Monday";
+        case 2 -> "Tuesday";
+        case 3 -> "Wednesday";
+        case 4 -> "Thursday";
+        case 5 -> "Friday";
+        case 6 -> "Saturday";
+        case 7 -> "Sunday";
+        default -> "Invalid";
+    };
+}
+
+8 Слишком много логики в main
+Пример:
+
+public class Main {
+    public static void main(String[] args) {
+        String name = "Alice";
+        int age = 20;
+        System.out.println("Name: " + name + ", Age: " + age);
+        if (age >= 18) {
+            System.out.println("Adult");
+        } else {
+            System.out.println("Child");
+        }
+    }
+}
+
+Исправленный вариант:
+
+class User {
+    private String name;
+    private int age;
+
+    public User(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public void printInfo() {
+        System.out.println("Name: " + name + ", Age: " + age);
+        System.out.println(age >= 18 ? "Adult" : "Child");
+    }
+}
+
+public class Main {
+    public static void main(String[] args) {
+        User user = new User("Alice", 20);
+        user.printInfo();
+    }
+}

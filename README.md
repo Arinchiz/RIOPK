@@ -106,6 +106,253 @@ UI Kit программного средства представлен на р�
 
 Рисунок 9 – Страница аналитики
 
-ВЫВОДЫ
+4 БЕЗОПАСНОСТЬ
 
-В ходе лабораторной работы были разработаны контейнерный, компонентный и кодовый уровни программного средства с использованием нотации C4. Применение этой нотации при проектировании архитектуры позволяет наглядно и понятно представить структуру системы. Кроме того, был создан UI Kit, который облегчает процесс разработки за счёт готовых компонентных решений, ускоряя создание интерфейса. Он обеспечивает единообразие дизайна и взаимодействия элементов, улучшает пользовательский опыт и упрощает внесение изменений или добавление новых компонентов без необходимости переработки интерфейса.
+Для реализации системы безопасности были использованы следующие сторонние компоненты, входящие в экосистему Spring:
+1) Spring Security (Starter): spring-boot-starter-security - Основной фреймворк, взявший на себя управление фильтрами безопасности, аутентификацией и авторизацией.
+2) JSON Web Tokens (JWT): io.jsonwebtoken:jjwt-api - Выбран для реализации stateless-аутентификации. Это позволяет серверу не хранить сессию для каждого пользователя, что упрощает масштабирование. Клиент (веб-приложение) получает токен при входе и прикрепляет его к каждому последующему запросу.
+3) Spring Security Crypto: spring-security-crypto - Использован для реализации механизма шифрования (хеширования) паролей пользователей перед сохранением в базу данных.
+Реализация механизма авторизации
+Авторизация (проверка "что тебе можно делать") реализована на двух уровнях:
+a) Уровень фильтров (Общая конфигурация безопасности)
+Создан компонент JwtRequestFilter, который выполняется перед каждым запросом (кроме публичных). Его задача — прочитать токен из заголовка Authorization, валидировать его и загрузить данные пользователя в SecurityContextHolder.
+
+package com.mamamarket.config;
+
+import com.mamamarket.utils.JwtTokenUtils;
+import io.jsonwebtoken.ExpiredJwtException;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class JwtRequestFilter extends OncePerRequestFilter {
+
+    private final JwtTokenUtils jwtTokenUtils;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+        String authHeader = request.getHeader("Authorization");
+        String username = null;
+        String jwt = null;
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            jwt = authHeader.substring(7);
+            try {
+                username = jwtTokenUtils.getUsername(jwt);
+            } catch (ExpiredJwtException e) {
+                log.debug("Время жизни токена вышло");
+                // Можно отправить кастомный ответ, если нужно
+                // response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                // response.getWriter().write("Token expired");
+                // return;
+            } catch (Exception e) {
+                log.debug("Ошибка парсинга токена");
+            }
+        }
+        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            List<String> roles = jwtTokenUtils.getRoles(jwt);
+
+            log.info("Роли из токена: {}", roles);
+
+            UsernamePasswordAuthenticationToken token = new UsernamePasswordAuthenticationToken(
+                    username,
+                    null,
+                    roles.stream().map(SimpleGrantedAuthority::new).collect(Collectors.toList())
+            );
+            SecurityContextHolder.getContext().setAuthentication(token);
+        }
+        filterChain.doFilter(request, response);
+    }
+}
+
+Механизмы обеспечения безопасности данных
+a) Шифрование (Хеширование) паролей
+В соответствии с заданием, реализован механизм шифрования. Пароли пользователей никогда не хранятся в открытом виде. При регистрации пароль хешируется с использованием BCryptPasswordEncoder.
+BCrypt — это адаптивная хеш-функция, которая включает "соль" (salt) и "фактор стоимости" (work factor), что делает ее крайне устойчивой к атакам перебором (brute-force) и по радужным таблицам.
+Пример кода (Хеширование при регистрации)
+
+package com.mamamarket.service;
+
+import com.mamamarket.dto.UserDTO;
+import com.mamamarket.dto.RegistrationUserDTO;
+import com.mamamarket.entity.User;
+import com.mamamarket.exception.AppError;
+import com.mamamarket.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder; // <-- Импортируем PasswordEncoder
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class UserService implements UserDetailsService {
+
+    private final UserRepository userRepository;
+    private final RoleService roleService;
+    // --- ВОТ ИСПРАВЛЕНИЕ ---
+    // Внедряем PasswordEncoder, а НЕ SecurityConfig
+    private final PasswordEncoder passwordEncoder;
+    // -----------------------
+
+    public Optional<User> findByUsername(String username) {
+        return userRepository.findByUsername(username);
+    }
+
+    public Optional<User> findByEmail(String email) {
+        return userRepository.findByEmail(email);
+    }
+
+    @Transactional
+    public User createNewUser(RegistrationUserDTO registrationUserDto) {
+        if (findByUsername(registrationUserDto.getUsername()).isPresent() || findByEmail(registrationUserDto.getEmail()).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Пользователь с таким username или email уже существует");
+        }
+        User user = new User();
+        user.setUsername(registrationUserDto.getUsername());
+        user.setEmail(registrationUserDto.getEmail());
+        // Используем внедренный passwordEncoder
+        user.setPassword(passwordEncoder.encode(registrationUserDto.getPassword()));
+        user.setName(registrationUserDto.getName());
+        user.setPhone(registrationUserDto.getPhone());
+        user.setBalance(BigDecimal.ZERO);
+        user.setActive(true);
+
+        String roleName = registrationUserDto.getRole();
+        if ("SELLER".equals(roleName)) {
+            user.setRoles(List.of(roleService.getSellerRole()));
+            user.setSellerApproved(false); // Новые продавцы требуют одобрения
+        } else {
+            user.setRoles(List.of(roleService.getCustomerRole()));
+            user.setSellerApproved(false);
+        }
+
+        return userRepository.save(user);
+    }
+
+    @Override
+    @Transactional
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        User user = findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException(
+                        String.format("Пользователь '%s' не найден", username)
+                ));
+
+        List<SimpleGrantedAuthority> authorities = user.getRoles().stream()
+                .map(role -> new SimpleGrantedAuthority(role.getName()))
+                .collect(Collectors.toList());
+
+        log.debug("Загрузка пользователя [{}], Роли: {}", username, authorities);
+
+        return new org.springframework.security.core.userdetails.User(
+                user.getUsername(),
+                user.getPassword(),
+                authorities
+        );
+    }
+
+    // --- Методы для UserController ---
+
+    public UserDTO findUserDtoById(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь не найден"));
+        return convertToUserDTO(user);
+    }
+
+    public List<UserDTO> getAllUsers() {
+        return userRepository.findAll().stream()
+                .map(this::convertToUserDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional
+    public UserDTO blockUser(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь не найден"));
+        user.setActive(false);
+        return convertToUserDTO(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserDTO unblockUser(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь не найден"));
+        user.setActive(true);
+        return convertToUserDTO(userRepository.save(user));
+    }
+
+    @Transactional
+    public UserDTO approveSeller(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь не найден"));
+        if (!user.getRoles().stream().anyMatch(role -> role.getName().equals("ROLE_SELLER"))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Пользователь не является продавцом");
+        }
+        user.setSellerApproved(true);
+        return convertToUserDTO(userRepository.save(user));
+    }
+
+    public UserDTO findByEmailDto(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь не найден"));
+        return convertToUserDTO(user);
+    }
+
+    @Transactional
+    public UserDTO topUpBalance(String username, BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Сумма пополнения должна быть положительной");
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Пользователь не найден"));
+        user.setBalance(user.getBalance().add(amount));
+        return convertToUserDTO(userRepository.save(user));
+    }
+
+
+    public UserDTO convertToUserDTO(User user) {
+        return new UserDTO(
+                user.getId(),
+                user.getUsername(),
+                user.getEmail(),
+                user.getName(),
+                user.getPhone(),
+                user.getBalance(),
+                user.getRoles().stream().map(role -> role.getName()).collect(Collectors.toList()),
+                user.isActive(),
+                user.isSellerApproved()
+        );
+    }
+}
+На рисунке 1 отображен пример хеширования при регистрации.
+
+ ![image](https://github.com/user-attachments/assets/3238eef4-df5f-4c93-93e6-b3cedc9b3f79)
+
+Рисунок 1 – Хеширование при регистрации
+
